@@ -132,6 +132,8 @@ class ParallelPhraseParser(object):
     """
     self._line_index = self._next_read_line_index
     line = stream.readline(self._SENTENCE_BUFFER_SIZE)
+    if not line:
+      raise ParseFinished()
     if line.endswith('\n') or line.endswith('\n\r'):
       self._next_read_line_index += 1
       if check_sentence_buffer and len(line) == self._SENTENCE_BUFFER_SIZE:
@@ -206,8 +208,6 @@ class TsvParser(ParallelPhraseParser):
 
   def next_parallel_phrase_pair(self):
     line = self.readline(self._tsv_stream, check_sentence_buffer=True)
-    if not line:
-      raise ParseFinished()
     pair = line.split('\t')
     if len(pair) != 2:
       raise self.invalid_format_error('Each line can only contains 2 phrases.')
@@ -326,10 +326,11 @@ class TmxParser(ParallelPhraseParser):
     self._buffered_pairs_index = 0
     self._buffered_parsed_pairs = []
     while True:
-      buff = self.readline(self._tmx_stream, rstrip=False)
-      if not buff:
+      try:
+        buff = self.readline(self._tmx_stream, rstrip=False)
+      except ParseFinished:
         self._parser.close()
-        raise ParseFinished()
+        raise
       try:
         self._parser.feed(buff)
       except etree.XMLSyntaxError as e:
