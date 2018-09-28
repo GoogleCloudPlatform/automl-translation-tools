@@ -41,7 +41,7 @@ def _is_same_language(locale1, locale2):
   return locale1 == locale2
 
 
-def _try_decode(text, encoding='utf-8'):
+def _try_decode(text, encoding='utf-8-sig'):
   if isinstance(text, unicode):
     return text
   try:
