@@ -181,3 +181,5 @@ tags
 env
 .idea
 .vscode
+
+bazel*

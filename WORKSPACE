@@ -12,8 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from absl import app
-from automl import parser
+git_repository(
+    name = "io_bazel_rules_python",
+    remote = "https://github.com/bazelbuild/rules_python.git",
+    commit = "8b5d0683a7d878b28fffe464779c8a53659fc645",
+)
 
-if __name__ == '__main__':
-  app.run(parser.main)
+load("@io_bazel_rules_python//python:pip.bzl", "pip_repositories")
+pip_repositories()
+
+load("@io_bazel_rules_python//python:pip.bzl", "pip_import")
+pip_import(
+    name = "deps",
+    requirements = "//automl:requirements.txt",
+)
+load("@deps//:requirements.bzl", "pip_install")
+pip_install()

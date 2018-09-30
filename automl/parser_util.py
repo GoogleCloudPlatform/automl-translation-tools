@@ -46,8 +46,10 @@ def _try_decode(text, encoding='utf-8-sig'):
     return text
   try:
     return text.decode(encoding)
-  except UnicodeError as e:
-    raise ValueError('Invalide encoding, expect`{}`.'.format(encoding))
+  except UnicodeError:
+    if encoding == 'utf-8-sig':
+      encoding = 'utf-8'
+    raise ValueError('Invalid file encoding, expect`{}`.'.format(encoding))
 
 
 def _try_encode(text, encoding='utf-8'):
@@ -63,7 +65,7 @@ class InvalidFileFormatError(Exception):
     super(InvalidFileFormatError, self).__init__()
     if line_index is not None:
       self.message = 'Invalid {} file at line {}: {}'.format(
-        file_type, line_index, message)
+          file_type, line_index, message)
     else:
       self.message = 'Invalid {} file: {}'.format(file_type, message)
 
@@ -86,6 +88,8 @@ class ParallelPhraseParser(object):
   # The max number of skipped phrases in parsing we tolerate, exceeding this
   # number fails the parsing.
   _MAX_SKIPPED_PHRASES = 1024
+  # The max number of warning message of skipped phrases.
+  _MAX_SKIPPED_PHRASES_MSG_SIZE = 10
 
   FILE_FORMAT = None
 
@@ -98,6 +102,28 @@ class ParallelPhraseParser(object):
     # that the clients can show more concrete error messages to end users.
     # Note: the src_text and dst_text can be None.
     self._skipped_phrases = []
+
+  def get_warnings(self):
+    """Gets parse warning message.
+
+    Returns:
+      list of warning strings during parsing.
+    """
+    if not self._skipped_phrases:
+      return []
+    header_message = '{} sentence pairs skipped, here is '.format(
+        len(self._skipped_phrases))
+    if len(self._skipped_phrases) <= self._MAX_SKIPPED_PHRASES:
+      header_message += 'the warning messages:'
+    else:
+      header_message += 'the first {} warning messages:'.format(
+          self._MAX_SKIPPED_PHRASES)
+    warning_messages = [header_message] + [
+        'line {}: source=\'{}\', target=\'{}\', error: {}'.format(
+            line, src or '', target or '', err_msg) for line, src, target,
+        err_msg in self._skipped_phrases[:self._MAX_SKIPPED_PHRASES_MSG_SIZE]
+    ]
+    return warning_messages
 
   @property
   def current_line_number(self):
@@ -126,9 +152,10 @@ class ParallelPhraseParser(object):
       check_sentence_buffer: check sentence buffer if it is True.
       rstrip: strip line separator if it is True.
     Returns:
-      One line or _SENTENCE_BUFFER_SIZE buffer.
+      (One line or _SENTENCE_BUFFER_SIZE buffer, is_eof).
     Raises:
       InvalidFileFormatError: if buffer limit exceeded.
+      ParseFinished: if reach eof.
     """
     self._line_index = self._next_read_line_index
     line = stream.readline(self._SENTENCE_BUFFER_SIZE)
@@ -138,8 +165,8 @@ class ParallelPhraseParser(object):
       self._next_read_line_index += 1
       if check_sentence_buffer and len(line) == self._SENTENCE_BUFFER_SIZE:
         raise self.invalid_format_error(
-          'Length of the line exceeds the {} characters limit.'.format(
-            self._SENTENCE_BUFFER_SIZE))
+            'Length of the line exceeds the {} characters limit.'.format(
+                self._SENTENCE_BUFFER_SIZE))
     if rstrip:
       line = line.rstrip('\n').rstrip('\r').rstrip('\n')
     return _try_decode(line)
@@ -156,7 +183,7 @@ class ParallelPhraseParser(object):
   def invalid_format_error(self, message, show_line_index=True):
     line_index = self.current_line_number if show_line_index else None
     return InvalidFileFormatError(
-      file_type=self.FILE_FORMAT, line_index=line_index, message=message)
+        file_type=self.FILE_FORMAT, line_index=line_index, message=message)
 
 
 class ParallelPhraseExporter(object):
@@ -210,7 +237,7 @@ class TsvParser(ParallelPhraseParser):
     line = self.readline(self._tsv_stream, check_sentence_buffer=True)
     pair = line.split('\t')
     if len(pair) != 2:
-      raise self.invalid_format_error('Each line can only contains 2 phrases.')
+      raise self.invalid_format_error('Each line can only contain 2 phrases.')
     return tuple(pair)
 
 
@@ -247,9 +274,9 @@ class TmxParser(ParallelPhraseParser):
       will not return any error when there is no body element.
   <tu> is element inside <body>. Each <tu> contains a (src_lang, dst_lang) pair,
       it is expected to have 2 <tuv> elements.
-  <tuv> is element inside <tu>. Attribute 'xml:lang' is required. Each <tuv> is
-      expected to have 1 <seg> containing the phrase.
-  <seg> contains the parallel phrase in either source or target language.
+  <tuv> is element inside <tu>. Attribute 'xml:lang' is required. We will take
+      all texts in seg of tuv and join them with space. (May have extra space in
+      Asia languages)
 
   Other unsupported tags(e.g. <entry_metadata>) are skipped.
   For each <tu>, if we can not parse a (src_lang, dst_lang) pair from it, we
@@ -274,12 +301,12 @@ class TmxParser(ParallelPhraseParser):
 
   _TU_BUF_SIZE = 1024
   _PARENT_TAG_NAME = {
-    'tmx': '',
-    'header': 'tmx',
-    'body': 'tmx',
-    'tu': 'body',
-    'tuv': 'tu',
-    'seg': 'tuv',
+      'tmx': '',
+      'header': 'tmx',
+      'body': 'tmx',
+      'tu': 'body',
+      'tuv': 'tu',
+      'seg': 'tuv',
   }
 
   def __init__(self, src_lang_code, dst_lang_code, input_stream):
@@ -360,8 +387,9 @@ class TmxParser(ParallelPhraseParser):
         return
       buff_total_size += len(buff)
       if buff_total_size > self._SENTENCE_BUFFER_SIZE:
-        raise self.invalid_format_error('Exceeded buffer limit {}.'.format(
-          self._SENTENCE_BUFFER_SIZE))
+        raise self.invalid_format_error(
+            'Too many sentence pairs in one line; '
+            'try breaking them into multiple lines.')
 
   def _parse_tu_element(self, tu_element):
     """Parse a <tu> element or skip it on errors.
@@ -403,10 +431,12 @@ class TmxParser(ParallelPhraseParser):
     lang = tuv_element.get('{http://www.w3.org/XML/1998/namespace}lang', None)
     if lang:
       lang = _parse_locale(lang)
-
-    tuv_text = ' '.join(
-      text.strip() for text in tuv_element.itertext() if text.strip())
-    return tuv_text.strip(), lang
+    tuv_texts = []
+    for elem in tuv_element.getchildren():
+      if elem.tag == 'seg':
+        tuv_texts.extend(
+            text.strip() for text in elem.itertext() if text.strip())
+    return ' '.join(tuv_texts), lang
 
   def _skip_phrase_or_fail_parsing(self, src_text, dst_text, error_message):
     if len(self._skipped_phrases) < self._MAX_SKIPPED_PHRASES:
@@ -415,8 +445,8 @@ class TmxParser(ParallelPhraseParser):
       return
     # too many errors
     raise self.invalid_format_error(
-      'Too many sentence pair errors(%d) so far. The TMX may be broken.' %
-      len(self._skipped_phrases))
+        'Too many sentence pairs ({}) skipped due to errors.'.format(
+            len(self._skipped_phrases)))
 
   def _parse_header_element(self, element):
     """Parses header element."""
@@ -426,9 +456,9 @@ class TmxParser(ParallelPhraseParser):
     src_locale = _parse_locale(src_lang)
     if not _is_same_language(src_locale, self._src_lang):
       raise self.invalid_format_error(
-        'Language in header doesn\'t match language'
-        ' declared. Expecting {}, found {}'.format(self._src_lang,
-                                                   src_locale))
+          'Language in header doesn\'t match language'
+          ' declared. Expecting {}, found {}'.format(self._src_lang,
+                                                     src_locale))
 
   def _verify_element(self, action, tag):
     """Verifies whether elements' orgnization is valid."""
@@ -437,8 +467,8 @@ class TmxParser(ParallelPhraseParser):
     if action == 'start':
       if self._tag_name_stack[-1] != self._PARENT_TAG_NAME[tag]:
         raise self.invalid_format_error(
-          'Invalid tag structure: <%s> should go inside <%s>, not <%s>.' %
-          (tag, self._PARENT_TAG_NAME[tag], self._tag_name_stack[-1]))
+            'Invalid tag structure: <%s> should go inside <%s>, not <%s>.' %
+            (tag, self._PARENT_TAG_NAME[tag], self._tag_name_stack[-1]))
       if tag == 'header':
         if self._header_inited:
           raise self.invalid_format_error('Duplicate header tag.')
@@ -447,12 +477,13 @@ class TmxParser(ParallelPhraseParser):
         if self._body_inited:
           raise self.invalid_format_error('Duplicate body tag.')
         if not self._header_inited:
-          raise self.invalid_format_error('header should before body.')
+          raise self.invalid_format_error(
+              'The header tag should come before the body tag.')
       self._tag_name_stack.append(tag)
     if action == 'end':
       if self._tag_name_stack[-1] != tag:
         raise self.invalid_format_error('Unclosed tag {}.'.format(
-          self._tag_name_stack[-1]))
+            self._tag_name_stack[-1]))
       self._tag_name_stack.pop()
 
 
@@ -493,8 +524,8 @@ class TmxExporter(ParallelPhraseExporter):
 
   def feed_parallel_phrase_pair(self, src, dst):
     self._write(
-      self._TMX_PAIR_TMPL.format(self._src_lang_code, src,
-                                 self._dst_lang_code, dst))
+        self._TMX_PAIR_TMPL.format(self._src_lang_code, src,
+                                   self._dst_lang_code, dst))
 
   def initialize(self):
     self._write(self._TMX_INIT_TMPL.format(self._src_lang_code))

@@ -15,7 +15,18 @@ git clone https://github.com/GoogleCloudPlatform/automl-translation-tools.git
 cd automl-translation-tools
 virtualenv env
 . env/bin/activate
-pip install -r requirements.txt
+pip install -r automl/requirements.txt
+```
+
+### or use bazel
+
+```shell
+git clone https://github.com/GoogleCloudPlatform/automl-translation-tools.git
+cd automl-translation-tools
+# Run command, replace `python parser.py [FLAGS]` with
+bazel run automl:parser -- [FLAGS]
+# Tests
+bazel test automl/...
 ```
 
 ### Validate input file
