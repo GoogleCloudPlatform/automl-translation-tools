@@ -17,6 +17,7 @@ import os
 
 from absl import logging
 from lxml import etree
+from six import text_type
 
 
 def _skip_invalid_tmx_data():
@@ -42,7 +43,7 @@ def _is_same_language(locale1, locale2):
 
 
 def _try_decode(text, encoding='utf-8-sig'):
-  if isinstance(text, unicode):
+  if isinstance(text, text_type):
     return text
   try:
     return text.decode(encoding)
@@ -53,7 +54,7 @@ def _try_decode(text, encoding='utf-8-sig'):
 
 
 def _try_encode(text, encoding='utf-8'):
-  if isinstance(text, unicode):
+  if isinstance(text, text_type):
     return text.encode(encoding)
   return text
 
