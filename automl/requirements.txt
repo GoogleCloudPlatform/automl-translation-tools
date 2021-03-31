@@ -3,7 +3,7 @@ Babel==2.3.4
 enum34==1.1.6
 funcsigs==1.0.2
 future==0.16.0
-lxml==3.7.3
+lxml==4.6.3
 mock==2.0.0
 pbr==4.2.0
 pytz==2018.3
